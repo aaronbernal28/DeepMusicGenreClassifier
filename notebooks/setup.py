@@ -5,6 +5,9 @@ import librosa
 import soundfile as sf
 import time
 import torchaudio
+from torch.utils.data import Dataset
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 # Configuración del dispositivo
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -83,7 +86,7 @@ def train(model, train_dataloader, val_dataloader, optimizer, criterion, NUM_EPO
         if (epoch + 1) % 5 == 0:
             print(f'Época {epoch+1}/{NUM_EPOCHS}')
             print(f'  Pérdida Entrenamiento: {train_loss:.4f}')
-            print(f'  Pérdida Validación: {val_loss:.4f}')
+            print(f'  Pérdida Testeo: {val_loss:.4f}')
             print(f'  {"Mejorando" if val_loss < min(val_losses[:-1] + [float("inf")]) else "Empeorando"}')
     
     end_time = time.time()
@@ -159,3 +162,48 @@ def get_features(paths, feature_name, sr, max_len, hop_length, win_length):
             X.append(feature(x, sr=sr, max_len=max_len, hop_length=hop_length, win_length=win_length))
 
     return X
+
+def plot_losses(train_losses, val_losses, ax, log_scale=False, title=None):
+    ax.plot(train_losses, label='Train', c = 'darkcyan')
+    ax.plot(val_losses, label='Test', c = 'darkred')
+    ax.set_xlabel('Epocas')
+    ax.set_ylabel('Loss')
+    ax.set_title(title)
+    if log_scale:
+        ax.set_yscale('log')
+    ax.legend()
+    ax.grid(True)
+
+class Sequence_dataset(Dataset):
+    def __init__(self, X, y):
+        self.pairs = list(zip(X, y))
+    
+    def __len__(self):
+        return len(self.pairs)
+    
+    def __getitem__(self, idx):
+        xs, ys = self.pairs[idx]
+
+        return {
+            'input': torch.tensor(xs.T).to(device=device, dtype=torch.float32),
+            'target': F.one_hot(torch.tensor(ys), 10).to(device=device, dtype=torch.float32),
+            'input_length': xs.T.shape,
+            'target_length': 10
+        }
+    
+class Image_dataset(Dataset):
+    def __init__(self, X, y):
+        self.pairs = list(zip(X, y))
+    
+    def __len__(self):
+        return len(self.pairs)
+    
+    def __getitem__(self, idx):
+        xs, ys = self.pairs[idx]
+
+        return {
+            'input': torch.tensor(xs).to(device=device, dtype=torch.float32),
+            'target': F.one_hot(torch.tensor(ys), 10).to(device=device, dtype=torch.float32),
+            'input_length': xs.shape,
+            'target_length': 10
+        }
