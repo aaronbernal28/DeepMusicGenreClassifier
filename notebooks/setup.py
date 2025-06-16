@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Usando dispositivo: {device}")
 torch.cuda.manual_seed(28)
-torch.cuda.set_per_process_memory_fraction(0.6)
+torch.cuda.set_per_process_memory_fraction(0.8)
 
 # Funciones auxiliares
 def train_test_split_path():
