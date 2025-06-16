@@ -4,6 +4,7 @@ import numpy as np
 import librosa
 import soundfile as sf
 import time
+import torchaudio
 
 # Configuración del dispositivo
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -122,23 +123,39 @@ def CQT(x, sr, max_len, hop_length, win_length):
     C_db = librosa.amplitude_to_db(C, ref=np.max)
     return C_db
 
-def train_test(paths_train, paths_test, espectrogram_name, sr, max_len, hop_length, win_length):
-    if espectrogram_name == 'mel':
-        espectrogram = mel_spectrogram
-    elif espectrogram_name == 'mfcc':
-        espectrogram = mfcc_combined
-    elif espectrogram_name == 'cqt':
-        espectrogram = CQT
-    else: 
-        raise ValueError("Espectrograma no soportado. Usa 'mel', 'mfcc' o 'cqt'")
+def Wav2Vec2_features(x, sr, max_len, model, new_sr=16000):
+    waveform = torch.tensor(x[:max_len], dtype=torch.float32).to(device)
+    waveform = torchaudio.functional.resample(waveform, sr, new_sr)
     
-    X_train, X_test = [], []
-    for path in paths_train:
-        x, _ = sf.read(path)
-        X_train.append(espectrogram(x, sr=sr, max_len=max_len, hop_length=hop_length, win_length=win_length))
+    with torch.inference_mode():
+        features, _ = model.extract_features(waveform.unsqueeze(0))
 
-    for path in paths_test:
-        x, _ = sf.read(path)
-        X_test.append(espectrogram(x, sr=sr, max_len=max_len, hop_length=hop_length, win_length=win_length))
+    return features[-1].squeeze().detach().cpu().numpy()
 
-    return X_train, X_test
+def get_features(paths, feature_name, sr, max_len, hop_length, win_length):
+    X = []
+
+    if feature_name == 'wav2vec2':
+        bundle = torchaudio.pipelines.HUBERT_BASE
+        modelWav = bundle.get_model().to(device)
+        modelWav.eval()
+        for path in paths:
+            x, _ = sf.read(path)
+            X.append(Wav2Vec2_features(x, sr, max_len, modelWav))
+
+    else:
+
+        if feature_name == 'mel':
+            feature = mel_spectrogram
+        elif feature_name == 'mfcc':
+            feature = mfcc_combined
+        elif feature_name == 'cqt':
+            feature = CQT
+        else: 
+            raise ValueError("Feature no soportado. Usa 'wav2vec2', 'mel', 'mfcc' o 'cqt'")
+        
+        for path in paths:
+            x, _ = sf.read(path)
+            X.append(feature(x, sr=sr, max_len=max_len, hop_length=hop_length, win_length=win_length))
+
+    return X
