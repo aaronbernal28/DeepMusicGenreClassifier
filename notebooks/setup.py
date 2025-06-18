@@ -8,6 +8,8 @@ import torchaudio
 from torch.utils.data import Dataset
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import torch.nn as nn
+from torch.utils.data import DataLoader
 
 # Configuración del dispositivo
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -32,6 +34,8 @@ def train_test_split_path():
     X_train_path, X_eval_path, y_train, y_eval = train_test_split(X_path, y, test_size=0.1, random_state=28, stratify=y)
     X_train_path, X_test_path, y_train, y_test = train_test_split(X_train_path, y_train, test_size=0.2, random_state=28, stratify=y_train)
     return X_train_path, X_test_path, X_eval_path, y_train, y_test, y_eval
+
+_, _, _, y_train, y_test, y_eval = train_test_split_path()
 
 def train(model, train_dataloader, val_dataloader, optimizer, criterion, NUM_EPOCHS):
     train_losses = []
@@ -163,12 +167,16 @@ def get_features(paths, feature_name, sr, max_len, hop_length, win_length):
 
     return X
 
-def plot_losses(train_losses, val_losses, ax, log_scale=False, title=None):
-    ax.plot(train_losses, label='Train', c = 'darkcyan')
-    ax.plot(val_losses, label='Test', c = 'darkred')
+def plot_losses(train_losses, val_losses, ax, log_scale=False, title=None, accuracy=None):
+    ax.plot(train_losses, label='Train', c='darkcyan')
+    ax.plot(val_losses, label='Test', c='darkred')
     ax.set_xlabel('Epocas')
     ax.set_ylabel('Loss')
-    ax.set_title(title)
+    if accuracy is not None:
+        full_title = f"{title} (Accur: {accuracy:.2%})" if title else f"Accur: {accuracy:.2%}"
+    else:
+        full_title = title
+    ax.set_title(full_title)
     if log_scale:
         ax.set_yscale('log')
     ax.legend()
@@ -207,3 +215,62 @@ class Image_dataset(Dataset):
             'input_length': xs.shape,
             'target_length': 10
         }
+    
+def get_data_max(feature_name, dataset_class):
+    X_train = np.load(f'../Data/X_train_{feature_name}.npy') 
+    X_test = np.load(f'../Data/X_test_{feature_name}.npy') 
+
+    print(f"Entrenamiento: {len(X_train)} pares")
+    print(f"Testeo: {len(X_test)} pares")
+    print("-" * 50)
+
+    if feature_name == 'EnCodecMAE':
+        # venia (719, 1, 1031, 768) -> (719, 1031, 768) -> (719, 768, 1031) ~ (N, seq_len, timesteps)
+        X_train = X_train.squeeze(1).transpose(0, 2, 1)
+        X_test = X_test.squeeze(1).transpose(0, 2, 1)
+
+    if feature_name == 'wav2vec2':
+        # venia (719, 1, 1031, 768) -> (719, 1031, 768) -> (719, 768, 1031) ~ (N, seq_len, timesteps)
+        X_train = X_train.transpose(0, 2, 1)
+        X_test = X_test.transpose(0, 2, 1)
+
+    train_dataset = dataset_class(X_train, y_train)
+    test_dataset = dataset_class(X_test, y_test)
+
+    print('Primer elemento del dataset de entrenamiento:', train_dataset[0])
+    print("-" * 50)
+
+    return train_dataset, test_dataset
+
+def train_pro_max(model_class, train_dataset, test_dataset, feature_name: str, num_epoths: dict, batch_sizes: dict, learning_rates: dict, optimizer_name = 'Adam', **params):
+    '''
+    model_class es la clase del modelo a entrenar
+    feature_name es mel o mfcc o cqt o wav2vec2 o EnCodecMAE
+    '''
+    BATCH_SIZE = batch_sizes[feature_name]
+    LEARNING_RATE = learning_rates[feature_name]
+    NUM_EPOCHS = num_epoths[feature_name]
+
+    # Inicializa el modelo 
+    model = model_class(**params).to(device)
+
+    # Función de pérdida y optimizador
+    criterion = nn.CrossEntropyLoss()
+    if optimizer_name == 'Adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    elif optimizer_name == 'AdamW':
+        optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    else:
+        raise ValueError(f"Optimizador {optimizer_name} no soportado")
+    
+    print(f"Modelo creado con {sum(p.numel() for p in model.parameters())} parámetros")
+    print("-" * 50)
+    #### Entrenamiento del modelo #####
+
+    # DataLoaders en batches
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE)
+    val_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
+
+    train_losses, val_losses = train(model, train_dataloader, val_dataloader, optimizer, criterion, NUM_EPOCHS)
+
+    return model, train_losses, val_losses
